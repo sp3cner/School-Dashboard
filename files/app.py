@@ -12,7 +12,12 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 
-from canvas_client import CanvasClient, flatten_assignments, flatten_files
+from canvas_client import (
+    CanvasClient,
+    flatten_assignments,
+    flatten_files,
+    attach_assignment_materials,
+)
 from syllabus_parser import parse_syllabus_file
 
 st.set_page_config(page_title="School Dashboard", page_icon="🎓", layout="wide")
@@ -66,7 +71,14 @@ if connect_clicked or refresh_clicked:
             with st.sidebar.status("Fetching assignments and files per course...", expanded=False):
                 assignment_rows = flatten_assignments(client, courses)
                 file_rows = flatten_files(client, courses)
+                # Link each assignment to files referenced in its description.
+                # Reuses file_rows above — no extra Canvas API calls.
+                assignment_rows = attach_assignment_materials(
+                    assignment_rows, file_rows, client.base_url
+                )
 
+            for a in assignment_rows:
+                a.pop("description", None)  # raw HTML, only needed for the linking step
             st.session_state.canvas_assignments = pd.DataFrame(assignment_rows)
             st.session_state.canvas_files = pd.DataFrame(file_rows)
 
@@ -171,6 +183,8 @@ with tab_timeline:
                 "course": r["course"],
                 "item": r["title"],
                 "link": r["html_url"],
+                "materials": r.get("materials", ""),
+                "materials_url": r.get("materials_url", ""),
             })
 
     if not st.session_state.syllabus_items.empty:
@@ -186,6 +200,8 @@ with tab_timeline:
                 "course": "",
                 "item": f"[{r['category']}] {r['item']}",
                 "link": "",
+                "materials": "",
+                "materials_url": "",
             })
 
     if not combined_rows:
@@ -212,6 +228,8 @@ with tab_timeline:
                 "date": st.column_config.TextColumn("Date"),
                 "time": st.column_config.TextColumn("Time due"),
                 "link": st.column_config.LinkColumn("Link", display_text="Open"),
+                "materials": st.column_config.TextColumn("Materials"),
+                "materials_url": st.column_config.LinkColumn("Files", display_text="📎 Open"),
             },
         )
 
@@ -227,13 +245,15 @@ with tab_canvas:
         if selected_course != "All courses":
             df = df[df["course"] == selected_course]
         df["due_at"] = pd.to_datetime(df["due_at"], errors="coerce")
-        df = df.sort_values("due_at")
+        df = df.sort_values("due_at").drop(columns=["course_id"], errors="ignore")
         st.dataframe(
             df,
             use_container_width=True,
             hide_index=True,
             column_config={
                 "html_url": st.column_config.LinkColumn("Link", display_text="Open in Canvas"),
+                "materials": st.column_config.TextColumn("Materials"),
+                "materials_url": st.column_config.LinkColumn("Files", display_text="📎 Open"),
             },
         )
 

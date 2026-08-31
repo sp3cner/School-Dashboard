@@ -39,11 +39,13 @@ and revoke it from Canvas settings if you ever think it leaked.
 
 ## Using it
 
-- **Timeline tab** — every Canvas assignment with a due date, plus every
-  dated item pulled from your uploaded syllabi, merged and sorted. Filter to
-  "today and later" and a lookahead window.
+- **Timeline tab** — every Canvas assignment with a due date (and due time),
+  plus every dated item pulled from your uploaded syllabi, merged and sorted.
+  Filter to "today and later" and a lookahead window. The **Materials** /
+  **Files** columns link to any files the instructor attached to an
+  assignment's description.
 - **Canvas Assignments tab** — raw assignment list per course, with a link
-  straight to each assignment in Canvas.
+  straight to each assignment in Canvas, plus links to its attached files.
 - **Syllabus Items tab** — the dates the parser found in your uploaded
   syllabus files. Syllabus formats vary a lot, so this is a best-effort text
   scan, not perfect extraction — the table is editable, so fix, delete, or

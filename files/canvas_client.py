@@ -10,9 +10,14 @@ You need:
 """
 
 from __future__ import annotations
+import re
 import requests
 from datetime import datetime
 from typing import Optional
+
+# Matches "/files/12345" anywhere in a chunk of Canvas HTML (download links,
+# preview links, data-api attributes all contain this).
+_FILE_REF_RE = re.compile(r"/files/(\d+)")
 
 
 class CanvasClient:
@@ -96,13 +101,59 @@ def flatten_assignments(client: CanvasClient, courses: list[dict]) -> list[dict]
             rows.append({
                 "source": "Canvas",
                 "course": course_name,
+                "course_id": course_id,
                 "title": a.get("name"),
                 "due_at": a.get("due_at"),
                 "points_possible": a.get("points_possible"),
                 "html_url": a.get("html_url"),
                 "submission_types": ", ".join(a.get("submission_types") or []),
+                # raw description HTML — used to find attached files, then dropped
+                # before display (see attach_assignment_materials / app.py).
+                "description": a.get("description") or "",
             })
     return rows
+
+
+def extract_file_ids(html: str) -> list[int]:
+    """Return the Canvas file IDs referenced in a chunk of HTML, in order,
+    de-duplicated. Used to link an assignment to its attached materials."""
+    seen: list[int] = []
+    for match in _FILE_REF_RE.finditer(html or ""):
+        fid = int(match.group(1))
+        if fid not in seen:
+            seen.append(fid)
+    return seen
+
+
+def attach_assignment_materials(
+    assignment_rows: list[dict], file_rows: list[dict], base_url: str
+) -> list[dict]:
+    """For each assignment, find files referenced in its description HTML and
+    attach browser-facing links to them.
+
+    Reuses the already-fetched ``file_rows`` to resolve filenames, so this adds
+    no extra API calls. Sets two fields on each row:
+      - ``materials``: comma-separated filenames ("" if none)
+      - ``materials_url``: a stable Canvas page URL — the file's own page when
+        exactly one is attached, otherwise the assignment page listing them all
+    """
+    base_url = base_url.rstrip("/")
+    names_by_id = {
+        f["file_id"]: f.get("filename")
+        for f in file_rows
+        if f.get("file_id") is not None
+    }
+    for a in assignment_rows:
+        ids = extract_file_ids(a.get("description", ""))
+        names = [names_by_id.get(fid) or f"file {fid}" for fid in ids]
+        a["materials"] = ", ".join(names)
+        if len(ids) == 1:
+            a["materials_url"] = f"{base_url}/courses/{a['course_id']}/files/{ids[0]}"
+        elif len(ids) > 1:
+            a["materials_url"] = a.get("html_url") or ""
+        else:
+            a["materials_url"] = ""
+    return assignment_rows
 
 
 def flatten_files(client: CanvasClient, courses: list[dict]) -> list[dict]:
@@ -117,6 +168,7 @@ def flatten_files(client: CanvasClient, courses: list[dict]) -> list[dict]:
         for f in files:
             rows.append({
                 "course": course_name,
+                "file_id": f.get("id"),
                 "filename": f.get("display_name"),
                 "url": f.get("url"),
                 "updated_at": f.get("updated_at"),
