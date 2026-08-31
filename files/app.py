@@ -19,6 +19,7 @@ from canvas_client import (
     attach_assignment_materials,
 )
 from syllabus_parser import parse_syllabus_file
+from categorize import classify
 import storage
 
 st.set_page_config(page_title="School Dashboard", page_icon="🎓", layout="wide")
@@ -182,11 +183,26 @@ if st.sidebar.button("Parse uploaded syllabi", use_container_width=True):
                 all_rows.extend(rows)
             except Exception as e:
                 st.sidebar.error(f"{f.name}: {e}")
-        st.session_state.syllabus_items = pd.DataFrame(all_rows)
-        storage.save_df("syllabus_items", st.session_state.syllabus_items)
+
+        new_df = pd.DataFrame(all_rows)
+        parsed_names = {f.name for f in uploaded_files}
+        existing = st.session_state.syllabus_items
+        # Re-parsing a file replaces just that file's rows; other files stay.
+        # Then drop any exact (file, date, item) duplicates.
+        if not existing.empty and "source_file" in existing.columns:
+            existing = existing[~existing["source_file"].isin(parsed_names)]
+        merged = pd.concat([existing, new_df], ignore_index=True)
+        if not merged.empty:
+            merged = merged.drop_duplicates(
+                subset=["source_file", "date", "item"]
+            ).reset_index(drop=True)
+
+        st.session_state.syllabus_items = merged
+        storage.save_df("syllabus_items", merged)
         st.sidebar.success(
-            f"Extracted {len(all_rows)} dated item(s) from {len(uploaded_files)} file(s). "
-            "Saved — you won't need to re-upload on restart."
+            f"Parsed {len(uploaded_files)} file(s): {len(new_df)} dated item(s) found, "
+            f"{len(merged)} in the list after de-duplication. "
+            "Saved — no need to re-upload on restart."
         )
 
 st.sidebar.divider()
@@ -235,6 +251,7 @@ with tab_timeline:
                 "date": r["date"],
                 "time": r["date"].strftime("%I:%M %p").lstrip("0"),
                 "turned_in": turned_in_label(r, st.session_state.submission_overrides),
+                "type": r.get("category") or classify(r["title"], r.get("submission_types")),
                 "source": "Canvas",
                 "course": r["course"],
                 "item": r["title"],
@@ -253,9 +270,10 @@ with tab_timeline:
                 "date": r["date"],
                 "time": "",  # syllabus text scans rarely include a due time
                 "turned_in": "",
-                "source": f"Syllabus ({r['source_file']})",
-                "course": "",
-                "item": f"[{r['category']}] {r['item']}",
+                "type": r.get("category") or classify(r["item"]),
+                "source": "Syllabus",
+                "course": r["source_file"],
+                "item": r["item"],
                 "link": "",
                 "materials": "",
                 "materials_url": "",
@@ -265,6 +283,40 @@ with tab_timeline:
         st.info("Connect Canvas and/or upload + parse a syllabus to see the timeline.")
     else:
         timeline_df = pd.DataFrame(combined_rows).sort_values("date")
+
+        # --- De-duplicate -------------------------------------------------
+        # 1) exact repeats within a source
+        timeline_df = timeline_df.drop_duplicates(subset=["date", "source", "item"])
+        # 2) the same item showing up from two sources (a syllabus line and its
+        #    Canvas assignment): identical normalised text within a day of each
+        #    other. Keep the Canvas row — it has the link and submission status.
+        timeline_df["_norm"] = (
+            timeline_df["item"].fillna("").str.lower().str.replace(r"[^a-z0-9]+", "", regex=True)
+        )
+        timeline_df["_rank"] = (timeline_df["source"] != "Canvas").astype(int)
+        timeline_df = timeline_df.sort_values(["_norm", "_rank", "date"])
+        keep, anchor_norm, anchor_date = [], None, None
+        for _norm, _dt in zip(timeline_df["_norm"], timeline_df["date"]):
+            dup = (
+                len(_norm) >= 3
+                and _norm == anchor_norm
+                and anchor_date is not None
+                and abs((_dt - anchor_date).days) <= 1
+            )
+            keep.append(not dup)
+            if not dup:
+                anchor_norm, anchor_date = _norm, _dt
+        timeline_df = (
+            timeline_df[keep].drop(columns=["_norm", "_rank"]).sort_values("date")
+        )
+
+        # --- Filters -----------------------------------------------------
+        all_types = sorted(timeline_df["type"].dropna().unique().tolist())
+        selected_types = st.multiselect(
+            "Show types", all_types, default=all_types,
+            help="Filter the timeline by item type (Lab, Quiz, Exam, …).",
+        )
+        timeline_df = timeline_df[timeline_df["type"].isin(selected_types)]
 
         colf1, colf2 = st.columns(2)
         with colf1:
@@ -285,6 +337,10 @@ with tab_timeline:
                 "date": st.column_config.TextColumn("Date"),
                 "time": st.column_config.TextColumn("Time due"),
                 "turned_in": st.column_config.TextColumn("Turned in"),
+                "type": st.column_config.TextColumn("Type"),
+                "source": st.column_config.TextColumn("Source"),
+                "course": st.column_config.TextColumn("Course / file"),
+                "item": st.column_config.TextColumn("Item"),
                 "link": st.column_config.LinkColumn("Link", display_text="Open"),
                 "materials": st.column_config.TextColumn("Materials"),
                 "materials_url": st.column_config.LinkColumn("Files", display_text="📎 Open"),
@@ -302,11 +358,25 @@ with tab_canvas:
         for _col in ("assignment_id", "canvas_status", "grade"):
             if _col not in df.columns:
                 df[_col] = None  # tolerate data saved before these columns existed
+        if "category" not in df.columns or df["category"].isna().all():
+            df["category"] = df.apply(
+                lambda r: classify(r.get("title"), r.get("submission_types")), axis=1
+            )
 
-        course_options = ["All courses"] + sorted(df["course"].dropna().unique().tolist())
-        selected_course = st.selectbox("Filter by course", course_options)
+        fcol1, fcol2 = st.columns(2)
+        with fcol1:
+            course_options = ["All courses"] + sorted(df["course"].dropna().unique().tolist())
+            selected_course = st.selectbox("Filter by course", course_options)
+        with fcol2:
+            type_options = sorted(df["category"].dropna().unique().tolist())
+            selected_types = st.multiselect(
+                "Filter by type", type_options, default=type_options,
+                key="canvas_type_filter",
+            )
         if selected_course != "All courses":
             df = df[df["course"] == selected_course]
+        df = df[df["category"].isin(selected_types)]
+        df = df.rename(columns={"category": "type"})
 
         df["due_at"] = (
             pd.to_datetime(df["due_at"], errors="coerce", utc=True)
@@ -328,7 +398,7 @@ with tab_canvas:
         )
 
         view_cols = [c for c in [
-            "mark_turned_in", "turned_in", "course", "title", "due_at",
+            "mark_turned_in", "turned_in", "type", "course", "title", "due_at",
             "grade", "points_possible", "submission_types",
             "materials", "materials_url", "html_url", "assignment_id",
         ] if c in df.columns]
@@ -342,17 +412,18 @@ with tab_canvas:
             column_config={
                 "mark_turned_in": st.column_config.CheckboxColumn("Mark turned in"),
                 "turned_in": st.column_config.TextColumn("Status"),
+                "type": st.column_config.TextColumn("Type"),
                 "course": st.column_config.TextColumn("Course"),
                 "title": st.column_config.TextColumn("Assignment"),
                 "due_at": st.column_config.DatetimeColumn("Due", format="ddd, MMM D YYYY h:mm A"),
                 "grade": st.column_config.TextColumn("Grade"),
                 "points_possible": st.column_config.NumberColumn("Points"),
-                "submission_types": st.column_config.TextColumn("Type"),
+                "submission_types": st.column_config.TextColumn("Submission"),
                 "html_url": st.column_config.LinkColumn("Link", display_text="Open in Canvas"),
                 "materials": st.column_config.TextColumn("Materials"),
                 "materials_url": st.column_config.LinkColumn("Files", display_text="📎 Open"),
             },
-            key=f"canvas_editor_{selected_course}",
+            key=f"canvas_editor_{selected_course}_{'-'.join(selected_types)}",
         )
 
         new_overrides = dict(overrides)

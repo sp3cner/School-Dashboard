@@ -22,6 +22,8 @@ from dateutil import parser as dateparser
 import pdfplumber
 import docx
 
+from categorize import classify
+
 
 DATE_PATTERNS = [
     # Month name + day (+ optional year): "September 5", "Sept. 5, 2026"
@@ -31,26 +33,6 @@ DATE_PATTERNS = [
     r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b",
 ]
 DATE_RE = re.compile("|".join(DATE_PATTERNS), re.IGNORECASE)
-
-KEYWORD_CATEGORY = {
-    "exam": ["exam", "midterm", "final"],
-    "quiz": ["quiz"],
-    "paper": ["paper", "essay"],
-    "project": ["project"],
-    "presentation": ["presentation"],
-    "reading": ["read", "chapter"],
-    "assignment": ["assignment", "homework", "hw", "due"],
-    "class_event": ["no class", "holiday", "break"],
-}
-
-
-def _categorize(text: str) -> str:
-    lowered = text.lower()
-    for category, keywords in KEYWORD_CATEGORY.items():
-        if any(k in lowered for k in keywords):
-            return category
-    return "other"
-
 
 def extract_text(file_bytes: bytes, filename: str) -> str:
     ext = filename.lower().rsplit(".", 1)[-1]
@@ -75,8 +57,10 @@ def extract_text(file_bytes: bytes, filename: str) -> str:
 
 def extract_dated_items(text: str, source_filename: str, default_year: Optional[int] = None) -> list[dict]:
     """Scan text line by line for anything that looks like a date, and
-    return a list of {date, raw_line, category, source_file} rows."""
+    return a list of {date, item, category, source, source_file} rows,
+    de-duplicated (PDF headers/footers repeat the same line on every page)."""
     rows = []
+    seen: set[tuple[str, str]] = set()
     now_year = default_year or datetime.now().year
 
     for raw_line in text.splitlines():
@@ -91,12 +75,17 @@ def extract_dated_items(text: str, source_filename: str, default_year: Optional[
                 parsed = dateparser.parse(match, default=datetime(now_year, 1, 1), fuzzy=True)
             except (ValueError, OverflowError):
                 continue
+            item = line[:200]
+            key = (parsed.date().isoformat(), item)
+            if key in seen:
+                continue
+            seen.add(key)
             rows.append({
                 "source": "Syllabus",
                 "source_file": source_filename,
                 "date": parsed.date().isoformat(),
-                "item": line[:200],
-                "category": _categorize(line),
+                "item": item,
+                "category": classify(line),
             })
     return rows
 

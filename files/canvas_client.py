@@ -15,6 +15,8 @@ import requests
 from datetime import datetime
 from typing import Optional
 
+from categorize import classify
+
 # Matches "/files/12345" anywhere in a chunk of Canvas HTML (download links,
 # preview links, data-api attributes all contain this).
 _FILE_REF_RE = re.compile(r"/files/(\d+)")
@@ -110,6 +112,7 @@ def flatten_assignments(client: CanvasClient, courses: list[dict]) -> list[dict]
                 "course_id": course_id,
                 "assignment_id": a.get("id"),
                 "title": a.get("name"),
+                "category": classify(a.get("name"), sub_types),
                 "due_at": a.get("due_at"),
                 "points_possible": a.get("points_possible"),
                 "html_url": a.get("html_url"),

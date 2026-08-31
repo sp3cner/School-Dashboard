@@ -51,16 +51,19 @@ The API token is never part of this — only fetched data and your own edits.
 ## Using it
 
 - **Timeline tab** — every Canvas assignment with a due date (and due time),
-  plus every dated item pulled from your uploaded syllabi, merged and sorted.
-  Filter to "today and later" and a lookahead window. The **Materials** /
-  **Files** columns link to any files the instructor attached to an
-  assignment's description. The **Turned in** column shows submission status.
-- **Canvas Assignments tab** — assignment list per course, with links to
-  each assignment and its attached files, plus a **Turned in** status.
-  Native Canvas assignments report status automatically (submitted / graded /
-  missing). For work Canvas can't see directly — **Gradescope** assignments
-  you've submitted but that aren't graded yet — tick **Mark turned in**; that
-  mark is saved.
+  plus every dated item pulled from your uploaded syllabi, merged, sorted,
+  and **de-duplicated** (a syllabus line and its Canvas assignment collapse to
+  one row — the Canvas one, so you keep the link and status). Filter by
+  **type** (Lab, Quiz, Exam, …), by "today and later", and a lookahead window.
+  The **Materials** / **Files** columns link to any files the instructor
+  attached to an assignment's description. **Turned in** shows submission
+  status.
+- **Canvas Assignments tab** — assignment list per course, filterable by
+  course and by type, with links to each assignment and its attached files,
+  plus a **Turned in** status. Native Canvas assignments report status
+  automatically (submitted / graded / missing). For work Canvas can't see
+  directly — **Gradescope** assignments you've submitted but that aren't
+  graded yet — tick **Mark turned in**; that mark is saved.
 - **Syllabus Items tab** — the dates the parser found in your uploaded
   syllabus files. Syllabus formats vary a lot, so this is a best-effort text
   scan, not perfect extraction — the table is editable, so fix, delete, or
@@ -71,11 +74,16 @@ The API token is never part of this — only fetched data and your own edits.
 
 The parser looks for lines containing something that looks like a date
 (`Sept 5`, `9/5`, `9/5/26`, etc.) and keeps the surrounding line of text as
-the description, tagging it with a rough category (exam, quiz, paper,
-project, assignment, reading, other) based on keywords. It works well for
-syllabi with a dated schedule table or a list of "Week X — date — topic"
-lines. It will miss things in unusual formats — that's what the editable
-table is for.
+the description. It works well for syllabi with a dated schedule table or a
+list of "Week X — date — topic" lines. It will miss things in unusual
+formats — that's what the editable table is for. Repeated lines (PDF headers
+and footers) are dropped, and re-parsing a file replaces just that file's
+rows rather than piling on duplicates.
+
+Every item — Canvas or syllabus — is tagged with a **type** by the shared
+classifier in `categorize.py` (Exam, Quiz, Lab, Homework, Project, Paper,
+Presentation, Discussion, Reading, Class event, Other). That's what the type
+filters use. Edit `_PATTERNS` there to tune the keywords.
 
 ## Extending this
 
@@ -83,4 +91,5 @@ Some natural next steps if you want to take this further:
 - Add `.ics` calendar export so due dates show up in your phone's calendar.
 - Add email/text reminders for items due soon.
 - Support multiple syllabus formats more robustly with an LLM-based extractor
-  instead of regex, for messier syllabi.
+  instead of regex, for messier syllabi (this would also give better `type`
+  classification than the keyword rules in `categorize.py`).
