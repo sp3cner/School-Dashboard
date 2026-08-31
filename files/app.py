@@ -166,6 +166,7 @@ with tab_timeline:
                 continue
             combined_rows.append({
                 "date": r["date"],
+                "time": r["date"].strftime("%I:%M %p").lstrip("0"),
                 "source": "Canvas",
                 "course": r["course"],
                 "item": r["title"],
@@ -180,6 +181,7 @@ with tab_timeline:
                 continue
             combined_rows.append({
                 "date": r["date"],
+                "time": "",  # syllabus text scans rarely include a due time
                 "source": f"Syllabus ({r['source_file']})",
                 "course": "",
                 "item": f"[{r['category']}] {r['item']}",
@@ -207,6 +209,8 @@ with tab_timeline:
             use_container_width=True,
             hide_index=True,
             column_config={
+                "date": st.column_config.TextColumn("Date"),
+                "time": st.column_config.TextColumn("Time due"),
                 "link": st.column_config.LinkColumn("Link", display_text="Open"),
             },
         )
