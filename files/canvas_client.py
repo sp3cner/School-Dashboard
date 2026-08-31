@@ -56,9 +56,12 @@ class CanvasClient:
         return self._get_all("courses", params=params)
 
     def get_assignments(self, course_id: int) -> list[dict]:
+        # include[]=submission attaches the current user's submission object
+        # (workflow_state, submitted_at, score, grade, missing/late flags) so
+        # we can show whether each assignment has been turned in.
         return self._get_all(
             f"courses/{course_id}/assignments",
-            params={"per_page": 100, "order_by": "due_at"},
+            params={"per_page": 100, "order_by": "due_at", "include[]": "submission"},
         )
 
     def get_files(self, course_id: int) -> list[dict]:
@@ -98,20 +101,60 @@ def flatten_assignments(client: CanvasClient, courses: list[dict]) -> list[dict]
         except requests.RequestException:
             continue
         for a in assignments:
+            sub = _submission_summary(a)
+            ext_url = (a.get("external_tool_tag_attributes") or {}).get("url") or ""
+            sub_types = a.get("submission_types") or []
             rows.append({
                 "source": "Canvas",
                 "course": course_name,
                 "course_id": course_id,
+                "assignment_id": a.get("id"),
                 "title": a.get("name"),
                 "due_at": a.get("due_at"),
                 "points_possible": a.get("points_possible"),
                 "html_url": a.get("html_url"),
-                "submission_types": ", ".join(a.get("submission_types") or []),
+                "submission_types": ", ".join(sub_types),
+                "canvas_status": sub["status"],
+                "submitted_at": sub["submitted_at"],
+                "grade": sub["grade"],
+                "score": sub["score"],
+                # True when Canvas hands grading off to an external tool
+                # (Gradescope, etc.) — Canvas can't see the submission until a
+                # grade is passed back, so these rely on the manual override.
+                "external_tool": "external_tool" in sub_types,
+                "is_gradescope": "gradescope" in ext_url.lower()
+                or "gradescope" in (a.get("name") or "").lower(),
                 # raw description HTML — used to find attached files, then dropped
                 # before display (see attach_assignment_materials / app.py).
                 "description": a.get("description") or "",
             })
     return rows
+
+
+def _submission_summary(assignment: dict) -> dict:
+    """Condense the Canvas ``submission`` sub-object into a status string plus
+    the raw bits worth showing. Requires the assignments call to have used
+    ``include[]=submission``; degrades gracefully if it didn't."""
+    sub = assignment.get("submission") or {}
+    state = sub.get("workflow_state")
+    submitted_at = sub.get("submitted_at")
+    score = sub.get("score")
+
+    if state == "graded" or score is not None:
+        status = "Graded"
+    elif submitted_at or state in ("submitted", "pending_review"):
+        status = "Submitted"
+    elif sub.get("missing"):
+        status = "Missing"
+    else:
+        status = "Not submitted"
+
+    return {
+        "status": status,
+        "submitted_at": submitted_at,
+        "score": score,
+        "grade": sub.get("grade"),
+    }
 
 
 def extract_file_ids(html: str) -> list[int]:

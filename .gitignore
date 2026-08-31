@@ -26,6 +26,9 @@ uploads/
 *.pdf
 *.docx
 
+# Locally saved dashboard state (Canvas cache, syllabus rows, turned-in marks)
+data/
+
 # OS / editor
 .DS_Store
 Thumbs.db
