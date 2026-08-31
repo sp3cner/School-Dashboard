@@ -1,0 +1,33 @@
+# Secrets / credentials — never commit
+.env
+.env.*
+*.env
+secrets.toml
+.streamlit/secrets.toml
+*.key
+*.pem
+credentials.json
+token.json
+*_token*
+*.secret
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Uploaded syllabi / user data
+uploads/
+*.pdf
+*.docx
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
